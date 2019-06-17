@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:util="http://www.springframework.org/schema/util"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+        http://www.springframework.org/schema/beans/spring-beans.xsd
+        http://www.springframework.org/schema/util
+        http://www.springframework.org/schema/util/spring-util.xsd">
+
+    <!-- use MD5 hash -->
+    <bean id="hashedCredentialsMatcher" class="org.apache.shiro.authc.credential.HashedCredentialsMatcher">
+        <property name="hashAlgorithmName" value="MD5"/>
+    </bean>
+    <bean id="eossAuthorizingRealm" class="com.jelly.eoss.shiro.EossAuthorizingRealm">
+        <property name="credentialsMatcher" ref="hashedCredentialsMatcher"/>
+    </bean>
+
+    <!-- enable cacheManager to use localCache -->
+    <!--<bean id="cacheManager" class="org.apache.shiro.cache.MemoryConstrainedCacheManager"/>-->
+    <bean id="cacheManager" class="com.jelly.eoss.shiro.cache.RedisCacheManager">
+        <property name="redisTemplate" ref="redisTemplate"/>
+        <property name="localSize" value="${shiro.local.cache.size}"/>
+        <property name="expireTimeSeconds" value="${shiro.local.cache.expire.timeout.seconds}"/>
+    </bean>
+
+    <!-- session configuration -->
+    <!-- notice -->
+    <!-- you must specify an SessionIdGenerator, otherwise the id of SimpleSession will be null
+         and if store it to cacheDb, will cause an error like:
+         DelegatingSession implementation requires that the SessionKey argument returns a non-null sessionId
+         DelegatingSession.java:70-->
+    <!--
+        1, if you use an custom cacheManager, and store Session to cacheDb,
+        whenever you call subject.getSession(), will modify lastAccessTime of session
+        this will cause put to cacheDb many more time, there is an potential performance barrier
+        2, as we known, local cache can not cache all data, it must has an maxi size, or expired time
+        but the interface Cache has clear(), size(), keys(), values(), it only represent part of all data,
+        not all data, so, use it carefully according to your business requirement
+        the RedisCache not implement those above methods -->
+    <bean id="sessionIdGenerator" class="org.apache.shiro.session.mgt.eis.JavaUuidSessionIdGenerator"/>
+    <bean id="sessionDAO" class="org.apache.shiro.session.mgt.eis.EnterpriseCacheSessionDAO">
+        <property name="cacheManager" ref="cacheManager"/>
+        <property name="sessionIdGenerator" ref="sessionIdGenerator"/>
+    </bean>
+    <bean id="sessionManager" class="org.apache.shiro.web.session.mgt.DefaultWebSessionManager">
+        <property name="sessionDAO" ref="sessionDAO"/>
+        <property name="globalSessionTimeout" value="1800000"/><!-- milliseconds -->
+        <property name="sessionIdCookieEnabled" value="true"/>
+    </bean>
+
+    <!-- config SecurityManager -->
+    <bean id="securityManager" class="org.apache.shiro.web.mgt.DefaultWebSecurityManager">
+        <property name="realm" ref="eossAuthorizingRealm"/>
+        <property name="cacheManager" ref="cacheManager"/>
+        <property name="sessionManager" ref="sessionManager"/>
+    </bean>
+
+    <!-- custom AuthorizationFilter -->
+    <bean id="rolesOr" class="com.jelly.eoss.shiro.RolesOrAuthorizationFilter"/>
+    <bean id="permsOr" class="com.jelly.eoss.shiro.PermsOrAuthorizationFilter"/>
+
+    <!-- this bean id must be specific to shiroFilter to create an ShiroFilter -->
+    <bean id="shiroFilter" class="com.jelly.eoss.shiro.EossShiroFilterFactoryBean" depends-on="rolesOr, permsOr">
+        <property name="securityManager" ref="securityManager"/>
+        <property name="loginUrl" value="/toLogin.ac"/>
+        <property name="unauthorizedUrl" value="/401.jsp"/>
+        <property name="filters">
+            <util:map>
+                <entry key="rolesOr" value-ref="rolesOr"/>
+                <entry key="permsOr" value-ref="permsOr"/>
+            </util:map>
+        </property>
+        <!--<property name="anyFilterName" value="rolesOr, permsOr"/>-->
+        <property name="filterChainDefinitions">
+            <value>
+                [urls]
+                /static/** = anon
+                /toLogin.ac = anon
+                /login.ac = anon
+                /system/** = authc, rolesOr[系统管理员]
+                /business/** = authc, permsOr[perm:add, perm:delete]
+                /** = authc
+            </value>
+        </property>
+    </bean>
+
+    <!-- Bean post processor for Spring that automatically calls the init() and/or destroy() methods on Shiro objects. -->
+    <bean id="lifecycleBeanPostProcessor" class="org.apache.shiro.spring.LifecycleBeanPostProcessor"/>
+    <bean class="org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator"
+          depends-on="lifecycleBeanPostProcessor"/>
+    <bean class="org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor">
+        <property name="securityManager" ref="securityManager"/>
+    </bean>
+</beans>
