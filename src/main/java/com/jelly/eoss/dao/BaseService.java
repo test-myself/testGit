@@ -27,6 +27,10 @@ public class BaseService {
 		System.out.println("这此看看什么情况");
 		System.out.println("这此看看什么情况");
 		System.out.println("keyi l ma !");
+		System.out.println("keyi l ma !");
+		System.out.println("keyi l ma !");
+		System.out.println("keyi l ma !");
+		System.out.println("keyi l ma !");
 	}
 	
 	/******************************** Start MyBatis ********************************/
